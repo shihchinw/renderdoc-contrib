@@ -9,7 +9,7 @@ import warnings
 from datetime import datetime
 
 
-_image_ext_dict = {
+_IMAGE_EXT_NAME_MAP = {
 	rd.FileType.DDS: 'dds',
 	rd.FileType.PNG: 'png',
 	rd.FileType.JPG: 'jpg',
@@ -30,6 +30,50 @@ class ExportOptions:
 		self.export_output_targets = False
 		self.export_shaders = False
 		self.force_overwrite = False
+
+
+_DRAW_STATE_LABEL_MAP = {
+	'event_id' : 'Event ID',
+	'api_name' : 'Name',
+	'vertex_count' : 'Vertex Count',
+	'instance_count' : 'Instance Count',
+	'viewport_size' : 'Viewport',
+	'fbo_switch' : 'Framebuffer Switch',
+	'fbo_id' : 'Framebuffer',
+	'vert_shader_id' : 'Vertex Shader',
+	'frag_shader_id' : 'Fragment Shader',
+	'comp_shader_id' : 'Compute Shader',
+	'vs_textures' : 'VS Textures',
+	'fs_textures' : 'FS Textures',
+	'output_targets' : 'Outputs',
+	'color_mask' : 'Color Write',
+	'depth_state' : 'Depth State',
+	'depth_write' : 'Depth Write'
+}
+
+
+class DrawCallState:
+
+	def __init__(self, action, name) -> None:
+		self.event_id = action.eventId
+		self.api_name = name
+		self.vertex_count = action.numIndices
+		self.instance_count = action.numInstances
+		self.viewport_size = None
+		self.fbo_switch = ''
+		self.fbo_id = 0
+		self.vert_shader_id = 0
+		self.frag_shader_id = 0
+		self.comp_shader_id = 0
+		self.vs_textures = None
+		self.fs_textures = None
+		self.output_targets = None
+		self.color_mask = None
+		self.depth_state = None
+		self.depth_write = False
+
+	def write_to_csv_dict(self, csv_writer):
+		csv_writer.writerow(self.__dict__)
 
 
 def _get_first_action(controller: rd.ReplayController):
@@ -58,7 +102,7 @@ def _save_texture(resourceId, controller, filepath, image_type):
 	if resourceId == rd.ResourceId.Null():
 		return False
 
-	filepath = f'{filepath}.{_image_ext_dict[image_type]}'
+	filepath = f'{filepath}.{_IMAGE_EXT_NAME_MAP[image_type]}'
 	if os.path.exists(filepath):
 		return False
 
@@ -172,6 +216,8 @@ class DrawStateExtractor:
 
 class GLDrawStateExtractor(DrawStateExtractor):
 
+	last_fbo_id = None
+
 	def __init__(self, pipe_state, capture, clamp_pixel_range=False):
 		super().__init__(pipe_state, capture, clamp_pixel_range)
 
@@ -272,33 +318,44 @@ class GLDrawStateExtractor(DrawStateExtractor):
 
 		return results
 
-	def append_draw_states(self, action, action_name, csv_writer):
-		draw_states = [action.eventId, action_name, action.numIndices, action.numInstances,
-					   self.get_viewport_info(), self.get_fbo_id(),
-					   int(self.vert_shader_id),
-					   int(self.frag_shader_id),
-					   int(self.comp_shader_id)]
+	def append_draw_state(self, action, action_name, csv_writer):
+		draw_state = DrawCallState(action, action_name)
+		draw_state.viewport_size = self.get_viewport_info()
+		draw_state.fbo_id = self.get_fbo_id()
+
+		if draw_state.fbo_id != GLDrawStateExtractor.last_fbo_id:
+			draw_state.fbo_switch = 'v'
+		GLDrawStateExtractor.last_fbo_id = draw_state.fbo_id
+
+		draw_state.vert_shader_id = int(self.vert_shader_id)
+		draw_state.frag_shader_id = int(self.frag_shader_id)
+		draw_state.comp_shader_id = int(self.comp_shader_id)
 
 		for category, tex_dict in self.get_input_texture_desc_map().items():
 			input_tex_descs = []
 			for name, desc in tex_dict.items():
 				info = f'{name}: {desc.width} x {desc.height}, {desc.format.Name()}'
 				input_tex_descs.append(info)
-			draw_states.append('\n'.join(input_tex_descs))
+
+			input_tex_info_str = '\n'.join(input_tex_descs)
+			if category == 'VS':
+				draw_state.vs_textures = input_tex_info_str
+			else:
+				draw_state.fs_textures = input_tex_info_str
 
 		output_tex_descs = []
 		for name, desc in self.get_output_desc_map(action).items():
 			info = f'{name}: {desc.width} x {desc.height}, {desc.format.Name()}'
 			output_tex_descs.append(info)
-		draw_states.append('\n'.join(output_tex_descs))
+		draw_state.output_targets = '\n'.join(output_tex_descs)
 
 		write_masks = self.get_color_write_masks()
-		draw_states.append('\n'.join(write_masks))
+		draw_state.color_mask = '\n'.join(write_masks)
 
 		depth_state = self.pipe_state.depthState
-		draw_states.append(_get_depth_function_desc(depth_state))
-		draw_states.append('V' if depth_state.depthWrites else '')
-		csv_writer.writerow(draw_states)
+		draw_state.depth_state = _get_depth_function_desc(depth_state)
+		draw_state.depth_write = 'v' if depth_state.depthWrites else ''
+		draw_state.write_to_csv_dict(csv_writer)
 
 
 class VKDrawStateExtractor(DrawStateExtractor):
@@ -309,7 +366,7 @@ class VKDrawStateExtractor(DrawStateExtractor):
 
 
 def export_gl_action(capture, state, action, controller, options: ExportOptions, csv_writer=None):
-	print(f'Extracting draw [EID: {action.eventId:05d}]')
+	# print(f'Extracting draw [EID: {action.eventId:05d}]')
 
 	draw_state_extractor = GLDrawStateExtractor(state, capture, controller)
 	output_dir = options.output_dir
@@ -325,7 +382,7 @@ def export_gl_action(capture, state, action, controller, options: ExportOptions,
 
 	if csv_writer:
 		action_name = action.GetName(controller.GetStructuredFile())
-		draw_state_extractor.append_draw_states(action, action_name, csv_writer)
+		draw_state_extractor.append_draw_state(action, action_name, csv_writer)
 
 
 def traverse_draw_action(action: rd.ActionDescription, count: int, start_event_id: int, end_event_id: int):
@@ -357,21 +414,20 @@ def export_draw_call_states(controller: rd.ReplayController, capture: qrd.Captur
 	time_token = _get_time_token()
 	report_csv_path = os.path.join(options.output_dir, f'{basename}_{time_token}.csv')
 
-	header = ['Event ID', 'Name', 'Vertex Count', 'Instance Count',
-			  'Viewport', 'Framebuffer',
-			  'Vert-Shader', 'Frag-Shader', 'Compute Shader',
-			  'VS Textures', 'FS Textures',
-			  'Outputs', 'Color Write Mask', 'Depth State', 'Depth Write']
-
 	if not os.path.exists(options.output_dir):
 		os.makedirs(options.output_dir)
 
+	visited_draws = 0
 	with open(report_csv_path, 'w', newline='') as csvfile:
-		csv_writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
-		csv_writer.writerow(header)
+		csv_writer = csv.DictWriter(csvfile, fieldnames=_DRAW_STATE_LABEL_MAP.keys())
+		csv_writer.writerow(_DRAW_STATE_LABEL_MAP)
 
 		action = _get_first_action(controller)
 		for action in traverse_draw_action(action, options.draw_count, options.start_event_id, options.end_event_id):
+			if (visited_draws & 0x0F) == 0:
+				print(f'Extracting draw [EID: {action.eventId}]')
+			visited_draws += 1
+
 			controller.SetFrameEvent(action.eventId, True)
 			state = controller.GetPipelineState()
 			if state.IsCaptureGL():
