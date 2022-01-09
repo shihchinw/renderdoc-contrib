@@ -267,8 +267,13 @@ class GLDrawStateExtractor(DrawStateExtractor):
 			if _save_texture(resource_id, self.controller, filepath, image_type):
 				print(f'└ Save output target {filepath}')
 
-		filepath = os.path.join(output_dir, f'draw_depth_{event_id:04d}_{idx}')
-		if _save_texture(draw_fbo.depthAttachment.resourceId, self.controller, filepath, rd.FileType.PNG):
+		resource_id = draw_fbo.depthAttachment.resourceId
+		if resource_id == rd.ResourceId.Null():
+			return
+
+		filepath = os.path.join(output_dir, f'draw_depth_{event_id:04d}')
+		image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
+		if _save_texture(resource_id, self.controller, filepath, image_type):
 			print(f'└ Save output target {filepath}')
 
 	def get_input_texture_desc_map(self):
@@ -453,13 +458,13 @@ class VKDrawStateExtractor(DrawStateExtractor):
 			if _save_texture(resource_id, self.controller, filepath, image_type):
 				print(f'└ Save output target {filepath}')
 
-		filepath = os.path.join(output_dir, f'draw_depth_{event_id:04d}_{idx}')
 		depth_attach_idx = current_pass.renderpass.depthstencilAttachment
 		if depth_attach_idx < 0:
 			return
 
 		resource_id = attachments[depth_attach_idx].imageResourceId
 		image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
+		filepath = os.path.join(output_dir, f'draw_depth_{event_id:04d}')
 		if _save_texture(resource_id, self.controller, filepath, image_type):
 			print(f'└ Save output target {filepath}')
 
