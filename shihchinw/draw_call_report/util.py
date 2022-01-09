@@ -38,8 +38,8 @@ _DRAW_STATE_LABEL_MAP = {
 	'vertex_count' : 'Vertex Count',
 	'instance_count' : 'Instance Count',
 	'viewport_size' : 'Viewport',
-	'fbo_switch' : 'Framebuffer Switch',
-	'fbo_id' : 'Framebuffer',
+	'renderpass_switch' : 'RenderPass Switch',
+	'renderpass_id' : 'RenderPass',
 	'vert_shader_id' : 'Vertex Shader',
 	'frag_shader_id' : 'Fragment Shader',
 	'comp_shader_id' : 'Compute Shader',
@@ -60,8 +60,8 @@ class DrawCallState:
 		self.vertex_count = action.numIndices
 		self.instance_count = action.numInstances
 		self.viewport_size = None
-		self.fbo_switch = ''
-		self.fbo_id = 0
+		self.renderpass_switch = ''
+		self.renderpass_id = 0
 		self.vert_shader_id = 0
 		self.frag_shader_id = 0
 		self.comp_shader_id = 0
@@ -91,7 +91,8 @@ def _get_shader_resource_id(shader):
 
 
 def _get_depth_function_desc(depth_state):
-	if not depth_state.depthEnable:
+	if (not getattr(depth_state, 'depthEnable', True) or
+		not getattr(depth_state, 'depthTestEnable', True)):
 		return ''
 
 	compare_func_str = str(depth_state.depthFunction)
@@ -124,34 +125,26 @@ def _save_texture(resourceId, controller, filepath, image_type):
 	return True
 
 
-def _get_image_type_from_tex_desc(texture_desc):
-	if texture_desc.cubemap:
-		return rd.FileType.DDS
-
-	comp_type = texture_desc.format.compType
-	if comp_type == rd.CompType.Float or comp_type == rd.CompType.Depth:
-		return rd.FileType.EXR
-
-	return rd.FileType.PNG
-
-
 class DrawStateExtractor:
 
-	def __init__(self, pipe_state, capture, controller, clamp_pixel_range=False):
-		self.pipe_state = pipe_state
+	def __init__(self, capture, controller, action):
 		self.capture = capture
 		self.controller = controller
-		self.vert_shader_id = _get_shader_resource_id(pipe_state.vertexShader)
-		self.frag_shader_id = _get_shader_resource_id(pipe_state.fragmentShader)
-		self.comp_shader_id = _get_shader_resource_id(pipe_state.computeShader)
-		self.clamp_pixel_range = clamp_pixel_range
+		self.action = action
 
-	def _get_image_type(self, resource_id):
+	def _get_resource_image_type(self, resource_id, clamp_pixel_range):
 		texture_desc = self.capture.GetTexture(resource_id)
-		if self.clamp_pixel_range:
+		if texture_desc.cubemap:
+			return rd.FileType.DDS
+
+		if clamp_pixel_range:
 			return rd.FileType.PNG
 
-		return _get_image_type_from_tex_desc(texture_desc)
+		comp_type = texture_desc.format.compType
+		if comp_type == rd.CompType.Float or comp_type == rd.CompType.Depth:
+			return rd.FileType.EXR
+
+		return rd.FileType.PNG
 
 	def _get_texture_info(self, resource_id):
 		resource_desc = self.capture.GetResource(resource_id)
@@ -167,12 +160,14 @@ class DrawStateExtractor:
 		if encoding == rd.ShaderEncoding.GLSL:
 			return reflection.rawBytes.decode('utf-8').rstrip('\x00')
 		elif encoding == rd.ShaderEncoding.SPIRV:
+			# TODO: disassemble shader to GLSL.
 			state = self.controller.GetPipelineState()
+			# targets = self.controller.GetDisassemblyTargets(True)
+			# print(f'{targets}')
 			pipe = state.GetGraphicsPipelineObject()
 			return self.controller.DisassembleShader(pipe, reflection, '')
 
 		raise NotImplementedError(f'Unsupported shader encoding {reflection.encoding}')
-
 
 	def _save_shader(self, shader, output_dir):
 		if not shader:
@@ -206,38 +201,60 @@ class DrawStateExtractor:
 
 		with open(filepath, 'w', encoding='utf-8') as out_file:
 			out_file.writelines(content)
-			print(f'\tWrite shader {shader_id} to {filepath}')
+			print(f'└ Write shader {shader_id} to {filepath}')
 
 	def save_shaders(self, output_dir):
 		self._save_shader(self.pipe_state.computeShader, output_dir)
 		self._save_shader(self.pipe_state.vertexShader, output_dir)
 		self._save_shader(self.pipe_state.fragmentShader, output_dir)
 
+	def extract_resources(self, options):
+		output_dir = options.output_dir
+
+		if options.export_shaders:
+			self.save_shaders(os.path.join(output_dir, 'shaders'))
+
+		event_id = self.action.eventId
+		if options.export_input_textures:
+			self.save_input_textures(os.path.join(output_dir, 'textures'))
+
+		if options.export_output_targets:
+			self.save_output_targets(os.path.join(output_dir, 'outputs'))
+
+	def write_summary(self, csv_writer):
+		assert(csv_writer != None)
+		action_name = self.action.GetName(self.controller.GetStructuredFile())
+		self._append_draw_state_summary(action_name, csv_writer)
+
 
 class GLDrawStateExtractor(DrawStateExtractor):
 
 	last_fbo_id = None
 
-	def __init__(self, pipe_state, capture, clamp_pixel_range=False):
-		super().__init__(pipe_state, capture, clamp_pixel_range)
+	def __init__(self, capture, controller, action):
+		super().__init__(capture, controller, action)
+		self.pipe_state = controller.GetGLPipelineState()
 
-	def save_input_textures(self, event_id, controller, output_dir):
+	def save_input_textures(self, output_dir, clamp_pixel_range=False):
 		for texture in self.pipe_state.textures:
 			resource_id = texture.resourceId
 			if resource_id == rd.ResourceId.Null():
 				continue
 
 			if texture.type != rd.TextureType.Texture2D:
+				event_id = self.action.eventId
 				warnings.warn(f'[{event_id}] Non-supported texture type for dump: {resource_id}')
 				continue
 
 			resource_desc = self.capture.GetResource(resource_id)
 			filepath = os.path.join(output_dir, f'{resource_desc.name}')
-			if _save_texture(resource_id, controller, filepath, self._get_image_type(resource_id)):
+			image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
+			if _save_texture(resource_id, self.controller, filepath, image_type):
 				print(f'└ Save input texture: {filepath}')
 
-	def save_output_targets(self, controller, event_id, output_dir):
+	def save_output_targets(self, output_dir, clamp_pixel_range=False):
 		draw_fbo = self.pipe_state.framebuffer.drawFBO
+		event_id = self.action.eventId
 
 		for idx, attachment in enumerate(draw_fbo.colorAttachments):
 			resource_id = attachment.resourceId
@@ -245,11 +262,12 @@ class GLDrawStateExtractor(DrawStateExtractor):
 				continue
 
 			filepath = os.path.join(output_dir, f'draw_color_{event_id:04d}_{idx}')
-			if _save_texture(resource_id, controller, filepath, self._get_image_type(resource_id)):
+			image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
+			if _save_texture(resource_id, self.controller, filepath, image_type):
 				print(f'└ Save output target {filepath}')
 
 		filepath = os.path.join(output_dir, f'draw_depth_{event_id:04d}_{idx}')
-		if _save_texture(draw_fbo.depthAttachment.resourceId, controller, filepath, rd.FileType.PNG):
+		if _save_texture(draw_fbo.depthAttachment.resourceId, self.controller, filepath, rd.FileType.PNG):
 			print(f'└ Save output target {filepath}')
 
 	def get_input_texture_desc_map(self):
@@ -318,18 +336,18 @@ class GLDrawStateExtractor(DrawStateExtractor):
 
 		return results
 
-	def append_draw_state(self, action, action_name, csv_writer):
-		draw_state = DrawCallState(action, action_name)
+	def _append_draw_state_summary(self, action_name, csv_writer):
+		draw_state = DrawCallState(self.action, action_name)
 		draw_state.viewport_size = self.get_viewport_info()
-		draw_state.fbo_id = self.get_fbo_id()
+		draw_state.renderpass_id = self.get_fbo_id()
 
-		if draw_state.fbo_id != GLDrawStateExtractor.last_fbo_id:
-			draw_state.fbo_switch = 'v'
-		GLDrawStateExtractor.last_fbo_id = draw_state.fbo_id
+		if draw_state.renderpass_id != GLDrawStateExtractor.last_fbo_id:
+			draw_state.renderpass_switch = 'v'
+		GLDrawStateExtractor.last_fbo_id = draw_state.renderpass_id
 
-		draw_state.vert_shader_id = int(self.vert_shader_id)
-		draw_state.frag_shader_id = int(self.frag_shader_id)
-		draw_state.comp_shader_id = int(self.comp_shader_id)
+		draw_state.vert_shader_id = int(_get_shader_resource_id(self.pipe_state.vertexShader))
+		draw_state.frag_shader_id = int(_get_shader_resource_id(self.pipe_state.fragmentShader))
+		draw_state.comp_shader_id = int(_get_shader_resource_id(self.pipe_state.computeShader))
 
 		for category, tex_dict in self.get_input_texture_desc_map().items():
 			input_tex_descs = []
@@ -344,7 +362,7 @@ class GLDrawStateExtractor(DrawStateExtractor):
 				draw_state.fs_textures = input_tex_info_str
 
 		output_tex_descs = []
-		for name, desc in self.get_output_desc_map(action).items():
+		for name, desc in self.get_output_desc_map(self.action).items():
 			info = f'{name}: {desc.width} x {desc.height}, {desc.format.Name()}'
 			output_tex_descs.append(info)
 		draw_state.output_targets = '\n'.join(output_tex_descs)
@@ -360,29 +378,162 @@ class GLDrawStateExtractor(DrawStateExtractor):
 
 class VKDrawStateExtractor(DrawStateExtractor):
 
-	def __init__(self, pipe_state, capture, clamp_pixel_range=False):
-		super().__init__(pipe_state, capture, clamp_pixel_range)
+	last_render_pass_id = None
 
+	def __init__(self, capture, controller, action):
+		super().__init__(capture, controller, action)
+		self.pipe_state = controller.GetVulkanPipelineState()
 
+	def _get_shader_read_tex_resource_ids(self, shader_stage):
+		pipe = self.controller.GetPipelineState()
 
-def export_gl_action(capture, state, action, controller, options: ExportOptions, csv_writer=None):
-	# print(f'Extracting draw [EID: {action.eventId:05d}]')
+		resource_ids = []
+		for bound_array in pipe.GetReadOnlyResources(shader_stage, True):
+			for bound_resource in bound_array.resources:
+				resource_id = bound_resource.resourceId
+				if resource_id == rd.ResourceId.Null():
+					continue
 
-	draw_state_extractor = GLDrawStateExtractor(state, capture, controller)
-	output_dir = options.output_dir
+				resource_desc = self.capture.GetResource(resource_id)
+				if resource_desc.type == rd.ResourceType.Texture:
+					resource_ids.append(resource_id)
 
-	if options.export_shaders:
-		draw_state_extractor.save_shaders(os.path.join(output_dir, 'shaders'))
+		return resource_ids
 
-	if options.export_input_textures:
-		draw_state_extractor.save_input_textures(action.eventId, controller, os.path.join(output_dir, 'textures'))
+	def _get_active_read_tex_resource_ids(self):
+		resource_ids = []
+		resource_ids.extend(self._get_shader_read_tex_resource_ids(rd.ShaderStage.Vertex))
+		resource_ids.extend(self._get_shader_read_tex_resource_ids(rd.ShaderStage.Fragment))
+		resource_ids.extend(self._get_shader_read_tex_resource_ids(rd.ShaderStage.Compute))
+		return resource_ids
 
-	if options.export_output_targets:
-		draw_state_extractor.save_output_targets(controller, action.eventId, os.path.join(output_dir, 'outputs'))
+	def save_input_textures(self, output_dir, clamp_pixel_range=False):
+		for resource_id in self._get_active_read_tex_resource_ids():
+			texture_desc = self.capture.GetTexture(resource_id)
+			if texture_desc.dimension != 2:
+				event_id = self.action.eventId
+				warnings.warn(f'[{event_id}] Non-supported texture type for dump: {resource_id}')
+				continue
 
-	if csv_writer:
-		action_name = action.GetName(controller.GetStructuredFile())
-		draw_state_extractor.append_draw_state(action, action_name, csv_writer)
+			resource_desc = self.capture.GetResource(resource_id)
+			filepath = os.path.join(output_dir, f'{resource_desc.name}')
+			image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
+			if _save_texture(resource_id, self.controller, filepath, image_type):
+				print(f'└ Save input texture: {filepath}')
+
+	def _get_output_target_resource_ids(self):
+		current_pass = self.pipe_state.currentPass
+		attachments = current_pass.framebuffer.attachments
+		resource_ids = []
+
+		for idx in current_pass.renderpass.colorAttachments:
+			resource_id = attachments[idx].imageResourceId
+			if resource_id != rd.ResourceId.Null():
+				resource_ids.append(resource_id)
+
+		depth_attach_idx = current_pass.renderpass.depthstencilAttachment
+		if depth_attach_idx >= 0:
+			resource_ids.append(attachments[depth_attach_idx].imageResourceId)
+
+		return resource_ids
+
+	def save_output_targets(self, output_dir, clamp_pixel_range=False):
+		current_pass = self.pipe_state.currentPass
+		attachments = current_pass.framebuffer.attachments
+		event_id = self.action.eventId
+
+		for idx in current_pass.renderpass.colorAttachments:
+			resource_id = attachments[idx].imageResourceId
+			if resource_id == rd.ResourceId.Null():
+				continue
+
+			filepath = os.path.join(output_dir, f'draw_color_{event_id:04d}_{idx}')
+			image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
+			if _save_texture(resource_id, self.controller, filepath, image_type):
+				print(f'└ Save output target {filepath}')
+
+		filepath = os.path.join(output_dir, f'draw_depth_{event_id:04d}_{idx}')
+		depth_attach_idx = current_pass.renderpass.depthstencilAttachment
+		if depth_attach_idx < 0:
+			return
+
+		resource_id = attachments[depth_attach_idx].imageResourceId
+		image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
+		if _save_texture(resource_id, self.controller, filepath, image_type):
+			print(f'└ Save output target {filepath}')
+
+	def get_viewport_info(self):
+		viewport_states = []
+		for viewport_scissor in self.pipe_state.viewportScissor.viewportScissors:
+			viewport = viewport_scissor.vp
+			if viewport.enabled:
+				viewport_states.append(f'{int(viewport.width)} x {int(viewport.height)}')
+		return '\n'.join(viewport_states)
+
+	def get_renderpass_id(self):
+		return int(self.pipe_state.currentPass.renderpass.resourceId)
+
+	def get_input_texture_desc(self, shader_stage):
+		input_tex_descs = []
+		for resource_id in self._get_shader_read_tex_resource_ids(shader_stage):
+			name, tex_desc = self._get_texture_info(resource_id)
+			info = f'{name}: {tex_desc.width} x {tex_desc.height}, {tex_desc.format.Name()}'
+			input_tex_descs.append(info)
+
+		return '\n'.join(input_tex_descs)
+
+	def get_output_target_desc(self):
+		output_tex_descs = []
+		# We can't directly retrieve the output targets from action (i.e. action.outputs)
+		for resource_id in self._get_output_target_resource_ids():
+			if resource_id == rd.ResourceId.Null():
+				continue
+
+			name, tex_desc = self._get_texture_info(resource_id)
+			if tex_desc:
+				info = f'{name}: {tex_desc.width} x {tex_desc.height}, {tex_desc.format.Name()}'
+				output_tex_descs.append(info)
+
+		return '\n'.join(output_tex_descs)
+
+	def get_color_write_masks(self):
+		results = []
+		blends = self.pipe_state.colorBlend.blends
+		for blend in blends:
+			mask = blend.writeMask
+			channels = ['R', 'G', 'B', 'A']
+			writeMaskTokens = []
+			for idx, ch in enumerate(channels):
+				token = ch if mask & (1 << idx) else '_'
+				writeMaskTokens.append(token)
+
+			results.append(''.join(writeMaskTokens))
+
+		return results
+
+	def _append_draw_state_summary(self, action_name, csv_writer):
+		draw_state = DrawCallState(self.action, action_name)
+		draw_state.viewport_size = self.get_viewport_info()
+		draw_state.renderpass_id = self.get_renderpass_id()
+
+		if draw_state.renderpass_id != VKDrawStateExtractor.last_render_pass_id:
+			draw_state.renderpass_switch = 'v'
+		VKDrawStateExtractor.last_render_pass_id = draw_state.renderpass_id
+
+		draw_state.vert_shader_id = int(_get_shader_resource_id(self.pipe_state.vertexShader))
+		draw_state.frag_shader_id = int(_get_shader_resource_id(self.pipe_state.fragmentShader))
+		draw_state.comp_shader_id = int(_get_shader_resource_id(self.pipe_state.computeShader))
+		draw_state.vs_textures = self.get_input_texture_desc(rd.ShaderStage.Vertex)
+		draw_state.fs_textures = self.get_input_texture_desc(rd.ShaderStage.Fragment)
+		draw_state.output_targets = self.get_output_target_desc()
+
+		write_masks = self.get_color_write_masks()
+		draw_state.color_mask = '\n'.join(write_masks)
+
+		depth_state = self.pipe_state.depthStencil
+		draw_state.depth_state = _get_depth_function_desc(depth_state)
+		draw_state.depth_write = 'v' if depth_state.depthWriteEnable else ''
+		draw_state.write_to_csv_dict(csv_writer)
 
 
 def traverse_draw_action(action: rd.ActionDescription, count: int, start_event_id: int, end_event_id: int):
@@ -417,6 +568,11 @@ def export_draw_call_states(controller: rd.ReplayController, capture: qrd.Captur
 	if not os.path.exists(options.output_dir):
 		os.makedirs(options.output_dir)
 
+	state = controller.GetPipelineState()
+	if state.IsCaptureGL():
+		_DRAW_STATE_LABEL_MAP['renderpass_switch'] = 'FBO Switch'
+		_DRAW_STATE_LABEL_MAP['renderpass_id'] = 'FBO Id'
+
 	visited_draws = 0
 	with open(report_csv_path, 'w', newline='') as csvfile:
 		csv_writer = csv.DictWriter(csvfile, fieldnames=_DRAW_STATE_LABEL_MAP.keys())
@@ -429,12 +585,13 @@ def export_draw_call_states(controller: rd.ReplayController, capture: qrd.Captur
 			visited_draws += 1
 
 			controller.SetFrameEvent(action.eventId, True)
-			state = controller.GetPipelineState()
 			if state.IsCaptureGL():
-				gl_state = controller.GetGLPipelineState()
-				export_gl_action(capture, gl_state, action, controller, options, csv_writer)
+				draw_state_extractor = GLDrawStateExtractor(capture, controller, action)
 			elif state.IsCaptureVK():
-				raise NotImplementedError('Not support Vulkan yet.')
+				draw_state_extractor = VKDrawStateExtractor(capture, controller, action)
+
+			draw_state_extractor.extract_resources(options)
+			draw_state_extractor.write_summary(csv_writer)
 
 	print(f'Finish exporting {capture_filename}')
 
@@ -448,4 +605,8 @@ def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
 if 'pyrenderdoc' in globals():
 	options = ExportOptions()
 	options.draw_count = 5
+	# options.export_input_textures = True
+	# options.export_output_targets = True
+	# options.export_shaders = True
+	options.output_dir = r'D:\rdc_test\test'
 	pyrenderdoc.Replay().BlockInvoke(lambda ctx: export_draw_call_states(ctx, pyrenderdoc, options))
