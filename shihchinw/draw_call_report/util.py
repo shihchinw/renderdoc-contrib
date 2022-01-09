@@ -29,6 +29,7 @@ class ExportOptions:
 		self.export_input_textures = False
 		self.export_output_targets = False
 		self.export_shaders = False
+		self.clamp_output_pixel_range = False
 		self.force_overwrite = False
 
 
@@ -208,7 +209,7 @@ class DrawStateExtractor:
 		self._save_shader(self.pipe_state.vertexShader, output_dir)
 		self._save_shader(self.pipe_state.fragmentShader, output_dir)
 
-	def extract_resources(self, options):
+	def extract_resources(self, options: ExportOptions):
 		output_dir = options.output_dir
 
 		if options.export_shaders:
@@ -219,7 +220,7 @@ class DrawStateExtractor:
 			self.save_input_textures(os.path.join(output_dir, 'textures'))
 
 		if options.export_output_targets:
-			self.save_output_targets(os.path.join(output_dir, 'outputs'))
+			self.save_output_targets(os.path.join(output_dir, 'outputs'), options.clamp_output_pixel_range)
 
 	def write_summary(self, csv_writer):
 		assert(csv_writer != None)

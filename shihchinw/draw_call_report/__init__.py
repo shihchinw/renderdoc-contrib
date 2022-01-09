@@ -62,13 +62,20 @@ class Window(qrd.CaptureViewer):
         self.mqt.SetSpinboxBounds(self.endEventSpinbox, 1, 99999)
         self.mqt.SetSpinboxValue(self.endEventSpinbox, 9999)
         self.mqt.AddWidget(horz, self.endEventSpinbox)
+
         spacer = self.mqt.CreateSpacer(True)
         self.mqt.AddWidget(horz, spacer)
         self.mqt.AddWidget(vert, horz)
 
+        horz = self.mqt.CreateHorizontalContainer()
         self.exportBtn = self.mqt.CreateButton(self.OnExportReport)
         self.mqt.SetWidgetText(self.exportBtn, 'Export draw call report')
-        self.mqt.AddWidget(vert, self.exportBtn)
+        self.mqt.AddWidget(horz, self.exportBtn)
+
+        self.clampPixelRangeChkBox = self.mqt.CreateCheckbox(None)
+        self.mqt.SetWidgetText(self.clampPixelRangeChkBox, 'Clamp Output Pixel Range')
+        self.mqt.AddWidget(horz, self.clampPixelRangeChkBox)
+        self.mqt.AddWidget(vert, horz)
 
         ctx.AddCaptureViewer(self)
 
@@ -93,6 +100,8 @@ class Window(qrd.CaptureViewer):
         options.export_shaders = self.mqt.IsWidgetChecked(self.exportShaderChkBox)
         options.export_input_textures = self.mqt.IsWidgetChecked(self.exportInputTexturesChkBox)
         options.export_output_targets = self.mqt.IsWidgetChecked(self.exportOutputsChkBox)
+        options.export_output_targets = self.mqt.IsWidgetChecked(self.exportOutputsChkBox)
+        options.clamp_output_pixel_range = self.mqt.IsWidgetChecked(self.clampPixelRangeChkBox)
         options.draw_count = self.mqt.GetSpinboxValue(self.drawCountSpinBox)
 
         util.async_export(ctx, options)
