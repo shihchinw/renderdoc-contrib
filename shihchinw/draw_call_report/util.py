@@ -285,13 +285,30 @@ class GLDrawStateExtractor(DrawStateExtractor):
 		if _save_texture(resource_id, self.controller, filepath, image_type):
 			print(f'└ Save output target {filepath}')
 
+	def _get_shader_read_tex_bindpoints(self, shader: rd.GLShader):
+		""" Return bindpoint index set of shader's read textures.
+
+		Returns:
+			The set contains corresponding bindpoint indices of read textures.
+		"""
+		shader_reflection = shader.reflection
+		bindpoint_set = set()
+		if not shader_reflection:
+			return bindpoint_set
+
+		bindpoint_mapping = shader.bindpointMapping
+		for resource in shader_reflection.readOnlyResources:
+			if not resource.isTexture:
+				continue
+
+			bindpoint = bindpoint_mapping.readOnlyResources[resource.bindPoint] # Need remapping indices to access texture array.
+			bindpoint_set.add(bindpoint.bind)
+
+		return bindpoint_set
+
 	def get_input_texture_desc_map(self):
-		vs_tex_bind_points = set()
-		vertex_shader = self.pipe_state.vertexShader
-		if vertex_shader.reflection:
-			for resource in vertex_shader.reflection.readOnlyResources:
-				if resource.isTexture:
-					vs_tex_bind_points.add(resource.bindPoint)
+		vs_tex_bind_points = self._get_shader_read_tex_bindpoints(self.pipe_state.vertexShader)
+		fs_tex_bind_points = self._get_shader_read_tex_bindpoints(self.pipe_state.fragmentShader)
 
 		tex_desc_map = { 'VS': {}, 'FS': {} }
 		for idx, texture in enumerate(self.pipe_state.textures):
@@ -300,8 +317,10 @@ class GLDrawStateExtractor(DrawStateExtractor):
 				continue
 
 			name, tex_desc = self._get_texture_info(resource_id)
-			category = 'VS' if idx in vs_tex_bind_points else 'FS'
-			tex_desc_map[category][name] = tex_desc
+			if idx in vs_tex_bind_points:
+				tex_desc_map['VS'][name] = tex_desc
+			elif idx in fs_tex_bind_points:
+				tex_desc_map['FS'][name] = tex_desc
 
 		return tex_desc_map
 
@@ -620,8 +639,8 @@ def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
 if 'pyrenderdoc' in globals():
 	options = ExportOptions()
 	# options.draw_count = 999
-	# options.start_event_id = 15300
-	# options.end_event_id = 15400
+	# options.start_event_id = 1760
+	# options.end_event_id = 1770
 	# options.export_input_textures = True
 	# options.export_output_targets = True
 	# options.export_shaders = True
