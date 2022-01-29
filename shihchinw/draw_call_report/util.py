@@ -38,6 +38,7 @@ _DRAW_STATE_LABEL_MAP = {
 	'api_name' : 'Name',
 	'vertex_count' : 'Vertex Count',
 	'instance_count' : 'Instance Count',
+	'dispatch_dimension': 'Dispatch Dimension',
 	'viewport_size' : 'Viewport',
 	'renderpass_switch' : 'RenderPass Switch',
 	'renderpass_id' : 'RenderPass',
@@ -58,8 +59,16 @@ class DrawCallState:
 	def __init__(self, action, name) -> None:
 		self.event_id = action.eventId
 		self.api_name = name
-		self.vertex_count = action.numIndices
-		self.instance_count = action.numInstances
+
+		if action.flags & rd.ActionFlags.Drawcall:
+			self.vertex_count = action.numIndices
+			self.instance_count = action.numInstances
+			self.dispatch_dimension = None
+		elif action.flags & rd.ActionFlags.Dispatch:
+			self.vertex_count = None
+			self.instance_count = None
+			self.dispatch_dimension = action.dispatchDimension
+
 		self.viewport_size = None
 		self.renderpass_switch = ''
 		self.renderpass_id = 0
@@ -550,7 +559,7 @@ def traverse_draw_action(action: rd.ActionDescription, count: int, start_event_i
 		elif end_event_id > 0 and action.eventId >= end_event_id:
 			raise StopIteration
 
-		if action.flags & rd.ActionFlags.Drawcall:
+		if action.flags & (rd.ActionFlags.Drawcall | rd.ActionFlags.Dispatch):
 			yield action
 			count -= 1
 		action = action.next
@@ -610,7 +619,9 @@ def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
 
 if 'pyrenderdoc' in globals():
 	options = ExportOptions()
-	options.draw_count = 5
+	# options.draw_count = 999
+	# options.start_event_id = 15300
+	# options.end_event_id = 15400
 	# options.export_input_textures = True
 	# options.export_output_targets = True
 	# options.export_shaders = True
