@@ -324,15 +324,20 @@ class GLDrawStateExtractor(DrawStateExtractor):
 
 		return tex_desc_map
 
-	def get_output_desc_map(self, action):
+	def get_output_desc_map(self, action: rd.ActionDescription):
 		tex_desc_map = {}
-		for idx, resource_id in enumerate(action.outputs):
+
+		# Warning action.outputs would return null resources when there is no
+		# target blends. Therefore, we retrieve output targets from draw FBO instead.
+		draw_fbo = self.pipe_state.framebuffer.drawFBO
+		attachments = draw_fbo.colorAttachments + [draw_fbo.depthAttachment]
+		for attachment in attachments:
+			resource_id = attachment.resourceId
 			if resource_id == rd.ResourceId.Null():
 				continue
 
 			name, tex_desc = self._get_texture_info(resource_id)
-			if tex_desc:
-				tex_desc_map[name] = tex_desc
+			tex_desc_map[name] = tex_desc
 
 		return tex_desc_map
 
@@ -639,8 +644,8 @@ def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
 if 'pyrenderdoc' in globals():
 	options = ExportOptions()
 	# options.draw_count = 999
-	# options.start_event_id = 1760
-	# options.end_event_id = 1770
+	# options.start_event_id = 1885
+	# options.end_event_id = 1990
 	# options.export_input_textures = True
 	# options.export_output_targets = True
 	# options.export_shaders = True
