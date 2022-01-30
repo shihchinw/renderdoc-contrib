@@ -42,8 +42,8 @@ class Window(qrd.CaptureViewer):
         self.mqt.SetWidgetText(label, 'Export draw count')
 
         self.drawCountSpinBox = self.mqt.CreateSpinbox(0, 1)
-        self.mqt.SetSpinboxBounds(self.drawCountSpinBox, 1, 999)
-        self.mqt.SetSpinboxValue(self.drawCountSpinBox, 999)
+        self.mqt.SetSpinboxBounds(self.drawCountSpinBox, 1, 9999)
+        self.mqt.SetSpinboxValue(self.drawCountSpinBox, 9999)
         self.mqt.AddWidget(horz, label)
         self.mqt.AddWidget(horz, self.drawCountSpinBox)
         spacer = self.mqt.CreateSpacer(True)
