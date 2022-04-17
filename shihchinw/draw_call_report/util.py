@@ -8,6 +8,7 @@ import warnings
 
 from datetime import datetime
 
+_VERBOSE = False
 
 _IMAGE_EXT_NAME_MAP = {
 	rd.FileType.DDS: 'dds',
@@ -463,15 +464,20 @@ class VKDrawStateExtractor(DrawStateExtractor):
 	def _get_output_target_resource_ids(self):
 		current_pass = self.pipe_state.currentPass
 		attachments = current_pass.framebuffer.attachments
+		attachment_count = len(attachments)
 		resource_ids = []
 
 		for idx in current_pass.renderpass.colorAttachments:
+			if not (0 <= idx < attachment_count):
+				# Skip invalid attachment index
+				continue
+
 			resource_id = attachments[idx].imageResourceId
 			if resource_id != rd.ResourceId.Null():
 				resource_ids.append(resource_id)
 
 		depth_attach_idx = current_pass.renderpass.depthstencilAttachment
-		if depth_attach_idx >= 0:
+		if 0 <= depth_attach_idx < attachment_count:
 			resource_ids.append(attachments[depth_attach_idx].imageResourceId)
 
 		return resource_ids
@@ -619,7 +625,7 @@ def export_draw_call_states(controller: rd.ReplayController, capture: qrd.Captur
 
 		action = _get_first_action(controller)
 		for action in traverse_draw_action(action, options.draw_count, options.start_event_id, options.end_event_id):
-			if (visited_draws & 0x0F) == 0:
+			if (visited_draws & 0x0F) == 0 or _VERBOSE:
 				print(f'Extracting draw [EID: {action.eventId}]')
 			visited_draws += 1
 
