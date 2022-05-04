@@ -4,11 +4,14 @@ import renderdoc as rd
 import csv
 import os
 import re
+import subprocess as sp
+import tempfile
 import warnings
 
 from datetime import datetime
 
 _VERBOSE = False
+_SPIRV_CROSS_PATH = "C:/Program Files/RenderDoc/plugins/spirv/spirv-cross.exe"
 
 _IMAGE_EXT_NAME_MAP = {
 	rd.FileType.DDS: 'dds',
@@ -171,12 +174,14 @@ class DrawStateExtractor:
 		if encoding == rd.ShaderEncoding.GLSL:
 			return reflection.rawBytes.decode('utf-8').rstrip('\x00')
 		elif encoding == rd.ShaderEncoding.SPIRV:
-			# TODO: disassemble shader to GLSL.
-			state = self.controller.GetPipelineState()
-			# targets = self.controller.GetDisassemblyTargets(True)
-			# print(f'{targets}')
-			pipe = state.GetGraphicsPipelineObject()
-			return self.controller.DisassembleShader(pipe, reflection, '')
+			# If the shader is SPIRV, we first dump the byte code to a temp file,
+			# then use spirv-cross for readable source code conversion.
+			tmp_file_path = os.path.join(tempfile.gettempdir(), 'spirv.bytes')
+			with open(tmp_file_path, 'wb') as f:
+				f.write(reflection.rawBytes)
+				f.close()
+				cmd = f'"{_SPIRV_CROSS_PATH}" {tmp_file_path}'
+				return sp.check_output(cmd, stderr=sp.STDOUT, shell=True, encoding='utf-8')
 
 		raise NotImplementedError(f'Unsupported shader encoding {reflection.encoding}')
 
@@ -211,7 +216,7 @@ class DrawStateExtractor:
 			return
 
 		with open(filepath, 'w', encoding='utf-8') as out_file:
-			out_file.writelines(content)
+			out_file.write(content)
 			print(f'└ Write shader {shader_id} to {filepath}')
 
 	def save_shaders(self, output_dir):
@@ -642,6 +647,13 @@ def export_draw_call_states(controller: rd.ReplayController, capture: qrd.Captur
 
 
 def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
+	# Update spirv-cross path from config.
+	global _SPIRV_CROSS_PATH
+	for proc in ctx.Config().ShaderProcessors:
+		if proc.tool == qrd.KnownShaderTool.SPIRV_Cross:
+			_SPIRV_CROSS_PATH = proc.executable
+			break
+
 	def _replay_callback(r: rd.ReplayController):
 		export_draw_call_states(r, ctx, options)
 	ctx.Replay().AsyncInvoke('DrawCallReporter', _replay_callback)
