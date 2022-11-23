@@ -650,7 +650,7 @@ def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
 	# Update spirv-cross path from config.
 	global _SPIRV_CROSS_PATH
 	for proc in ctx.Config().ShaderProcessors:
-		if proc.tool == qrd.KnownShaderTool.SPIRV_Cross:
+		if proc.tool == rd.KnownShaderTool.SPIRV_Cross:
 			_SPIRV_CROSS_PATH = proc.executable
 			break
 

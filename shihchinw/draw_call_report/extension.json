@@ -1,8 +1,8 @@
 {
     "extension_api": 1,
     "name": "Draw call reporter",
-    "version": "1.0.2",
-    "minimum_renderdoc": "1.15",
+    "version": "1.0.3",
+    "minimum_renderdoc": "1.22",
     "description": "Tool to export draw call resources and an overview report of draw sequence",
     "author": "Shih-Chin Weng <shihchin.weng@gmail.com>",
     "url": "https://github.com/shihchinw/renderdoc-contrib"
