@@ -39,6 +39,7 @@ class ExportOptions:
 
 _DRAW_STATE_LABEL_MAP = {
 	'event_id' : 'Event ID',
+	'custom_name' : 'Custom Name',
 	'api_name' : 'Name',
 	'vertex_count' : 'Vertex Count',
 	'instance_count' : 'Instance Count',
@@ -63,6 +64,7 @@ class DrawCallState:
 	def __init__(self, action, name) -> None:
 		self.event_id = action.eventId
 		self.api_name = name
+		self.custom_name = '' if not action.parent else action.parent.customName
 
 		if action.flags & rd.ActionFlags.Drawcall:
 			self.vertex_count = action.numIndices
