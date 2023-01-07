@@ -72,6 +72,11 @@ class Window(qrd.CaptureViewer):
         self.mqt.SetWidgetText(self.exportBtn, 'Export draw call report')
         self.mqt.AddWidget(horz, self.exportBtn)
 
+        self.captureGPUDurationChkBox = self.mqt.CreateCheckbox(None)
+        self.mqt.SetWidgetText(self.captureGPUDurationChkBox, 'Capture GPU Duration')
+        self.mqt.SetWidgetChecked(self.captureGPUDurationChkBox, True)
+        self.mqt.AddWidget(horz, self.captureGPUDurationChkBox)
+
         self.clampPixelRangeChkBox = self.mqt.CreateCheckbox(None)
         self.mqt.SetWidgetText(self.clampPixelRangeChkBox, 'Clamp Output Pixel Range')
         self.mqt.AddWidget(horz, self.clampPixelRangeChkBox)
@@ -100,7 +105,7 @@ class Window(qrd.CaptureViewer):
         options.export_shaders = self.mqt.IsWidgetChecked(self.exportShaderChkBox)
         options.export_input_textures = self.mqt.IsWidgetChecked(self.exportInputTexturesChkBox)
         options.export_output_targets = self.mqt.IsWidgetChecked(self.exportOutputsChkBox)
-        options.export_output_targets = self.mqt.IsWidgetChecked(self.exportOutputsChkBox)
+        options.capture_gpu_duration = self.mqt.IsWidgetChecked(self.captureGPUDurationChkBox)
         options.clamp_output_pixel_range = self.mqt.IsWidgetChecked(self.clampPixelRangeChkBox)
         options.draw_count = self.mqt.GetSpinboxValue(self.drawCountSpinBox)
 

@@ -35,6 +35,7 @@ class ExportOptions:
 		self.export_shaders = False
 		self.clamp_output_pixel_range = False
 		self.force_overwrite = False
+		self.capture_gpu_duration = True
 
 
 _DRAW_STATE_LABEL_MAP = {
@@ -44,8 +45,9 @@ _DRAW_STATE_LABEL_MAP = {
 	'vertex_count' : 'Vertex Count',
 	'instance_count' : 'Instance Count',
 	'dispatch_dimension': 'Dispatch Dimension',
+	'elapsed_time' : 'GPU Duration (ms)',
 	'viewport_size' : 'Viewport',
-	'renderpass_switch' : 'RenderPass Switch',
+	'pass_switch' : 'Pass Switch',		# Switch to another frame buffer or dispatch compute task
 	'renderpass_id' : 'RenderPass',
 	'vert_shader_id' : 'Vertex Shader',
 	'frag_shader_id' : 'Fragment Shader',
@@ -61,22 +63,24 @@ _DRAW_STATE_LABEL_MAP = {
 
 class DrawCallState:
 
-	def __init__(self, action, name) -> None:
+	def __init__(self, action, name, elapsed_time) -> None:
 		self.event_id = action.eventId
 		self.api_name = name
 		self.custom_name = '' if not action.parent else action.parent.customName
+		self.elapsed_time = '' if not elapsed_time else elapsed_time
 
 		if action.flags & rd.ActionFlags.Drawcall:
 			self.vertex_count = action.numIndices
 			self.instance_count = action.numInstances
 			self.dispatch_dimension = None
+			self.pass_switch = ''
 		elif action.flags & rd.ActionFlags.Dispatch:
 			self.vertex_count = None
 			self.instance_count = None
 			self.dispatch_dimension = action.dispatchDimension
+			self.pass_switch = 'v' # Treat each compute dispatch a new pass item.
 
 		self.viewport_size = None
-		self.renderpass_switch = ''
 		self.renderpass_id = 0
 		self.vert_shader_id = 0
 		self.frag_shader_id = 0
@@ -239,10 +243,10 @@ class DrawStateExtractor:
 		if options.export_output_targets:
 			self.save_output_targets(os.path.join(output_dir, 'outputs'), options.clamp_output_pixel_range)
 
-	def write_summary(self, csv_writer):
+	def write_summary(self, action_elapsed_time, csv_writer):
 		assert(csv_writer != None)
 		action_name = self.action.GetName(self.controller.GetStructuredFile())
-		self._append_draw_state_summary(action_name, csv_writer)
+		self._append_draw_state_summary(action_name, action_elapsed_time, csv_writer)
 
 
 class GLDrawStateExtractor(DrawStateExtractor):
@@ -383,13 +387,13 @@ class GLDrawStateExtractor(DrawStateExtractor):
 
 		return results
 
-	def _append_draw_state_summary(self, action_name, csv_writer):
-		draw_state = DrawCallState(self.action, action_name)
+	def _append_draw_state_summary(self, action_name, action_elapsed_time, csv_writer):
+		draw_state = DrawCallState(self.action, action_name, action_elapsed_time)
 		draw_state.viewport_size = self.get_viewport_info()
 		draw_state.renderpass_id = self.get_fbo_id()
 
 		if draw_state.renderpass_id != GLDrawStateExtractor.last_fbo_id:
-			draw_state.renderpass_switch = 'v'
+			draw_state.pass_switch = 'v'
 		GLDrawStateExtractor.last_fbo_id = draw_state.renderpass_id
 
 		draw_state.vert_shader_id = int(_get_shader_resource_id(self.pipe_state.vertexShader))
@@ -563,13 +567,13 @@ class VKDrawStateExtractor(DrawStateExtractor):
 
 		return results
 
-	def _append_draw_state_summary(self, action_name, csv_writer):
-		draw_state = DrawCallState(self.action, action_name)
+	def _append_draw_state_summary(self, action_name, action_elapsed_time, csv_writer):
+		draw_state = DrawCallState(self.action, action_name, action_elapsed_time)
 		draw_state.viewport_size = self.get_viewport_info()
 		draw_state.renderpass_id = self.get_renderpass_id()
 
 		if draw_state.renderpass_id != VKDrawStateExtractor.last_render_pass_id:
-			draw_state.renderpass_switch = 'v'
+			draw_state.pass_switch = 'v'
 		VKDrawStateExtractor.last_render_pass_id = draw_state.renderpass_id
 
 		draw_state.vert_shader_id = int(_get_shader_resource_id(self.pipe_state.vertexShader))
@@ -622,8 +626,15 @@ def export_draw_call_states(controller: rd.ReplayController, capture: qrd.Captur
 
 	state = controller.GetPipelineState()
 	if state.IsCaptureGL():
-		_DRAW_STATE_LABEL_MAP['renderpass_switch'] = 'FBO Switch'
 		_DRAW_STATE_LABEL_MAP['renderpass_id'] = 'FBO Id'
+
+	# Construct map for (eventId, elapsed time) by using GPU timestamp.
+	action_elapsed_time_map = {}
+	if options.capture_gpu_duration:
+		assert rd.GPUCounter.EventGPUDuration in controller.EnumerateCounters(), 'Not found GPU timestamp counters'
+
+		for sample in controller.FetchCounters([rd.GPUCounter.EventGPUDuration]):
+			action_elapsed_time_map[sample.eventId] = sample.value.d * 1000.0 		# Convert unit to millisecond
 
 	visited_draws = 0
 	with open(report_csv_path, 'w', newline='') as csvfile:
@@ -643,7 +654,9 @@ def export_draw_call_states(controller: rd.ReplayController, capture: qrd.Captur
 				draw_state_extractor = VKDrawStateExtractor(capture, controller, action)
 
 			draw_state_extractor.extract_resources(options)
-			draw_state_extractor.write_summary(csv_writer)
+
+			action_elapsed_time = action_elapsed_time_map.get(action.eventId, None)
+			draw_state_extractor.write_summary(action_elapsed_time, csv_writer)
 
 	print(f'Finish exporting {capture_filename}')
 
@@ -663,7 +676,7 @@ def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
 
 if 'pyrenderdoc' in globals():
 	options = ExportOptions()
-	# options.draw_count = 999
+	options.draw_count = 30
 	# options.start_event_id = 1885
 	# options.end_event_id = 1990
 	# options.export_input_textures = True
