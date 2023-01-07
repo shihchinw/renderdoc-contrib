@@ -44,11 +44,11 @@ _DRAW_STATE_LABEL_MAP = {
 	'api_name' : 'Name',
 	'vertex_count' : 'Vertex Count',
 	'instance_count' : 'Instance Count',
-	'dispatch_dimension': 'Dispatch Dimension',
+	'dispatch_dimension' : 'Dispatch Dimension',
 	'elapsed_time' : 'GPU Duration (ms)',
 	'viewport_size' : 'Viewport',
 	'pass_switch' : 'Pass Switch',		# Switch to another frame buffer or dispatch compute task
-	'renderpass_id' : 'RenderPass',
+	'renderpass_id' : 'Render Pass',
 	'vert_shader_id' : 'Vertex Shader',
 	'frag_shader_id' : 'Fragment Shader',
 	'comp_shader_id' : 'Compute Shader',
