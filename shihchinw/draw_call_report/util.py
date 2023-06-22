@@ -44,6 +44,7 @@ _DRAW_STATE_LABEL_MAP = {
 	'api_name' : 'Name',
 	'vertex_count' : 'Vertex Count',
 	'instance_count' : 'Instance Count',
+	'shaded_vertex_count': 'Shaded Vertex Count',
 	'dispatch_dimension' : 'Dispatch Dimension',
 	'elapsed_time' : 'GPU Duration (ms)',
 	'viewport_size' : 'Viewport',
@@ -63,7 +64,7 @@ _DRAW_STATE_LABEL_MAP = {
 
 class DrawCallState:
 
-	def __init__(self, action, name, elapsed_time) -> None:
+	def __init__(self, action, name, elapsed_time, pipe_state) -> None:
 		self.event_id = action.eventId
 		self.api_name = name
 		self.custom_name = '' if not action.parent else action.parent.customName
@@ -72,19 +73,24 @@ class DrawCallState:
 		if action.flags & rd.ActionFlags.Drawcall:
 			self.vertex_count = action.numIndices
 			self.instance_count = action.numInstances
+			self.shaded_vertex_count = self.vertex_count * self.instance_count
 			self.dispatch_dimension = None
+			self.vert_shader_id = int(_get_shader_resource_id(pipe_state.vertexShader))
+			self.frag_shader_id = int(_get_shader_resource_id(pipe_state.fragmentShader))
+			self.comp_shader_id = 0
 			self.pass_switch = ''
 		elif action.flags & rd.ActionFlags.Dispatch:
-			self.vertex_count = None
-			self.instance_count = None
+			self.vertex_count = 0
+			self.instance_count = 0
+			self.shaded_vertex_count = 0
 			self.dispatch_dimension = action.dispatchDimension
+			self.vert_shader_id = 0
+			self.frag_shader_id = 0
+			self.comp_shader_id = int(_get_shader_resource_id(pipe_state.computeShader))
 			self.pass_switch = 'v' # Treat each compute dispatch a new pass item.
 
 		self.viewport_size = None
 		self.renderpass_id = 0
-		self.vert_shader_id = 0
-		self.frag_shader_id = 0
-		self.comp_shader_id = 0
 		self.vs_textures = None
 		self.fs_textures = None
 		self.output_targets = None
@@ -390,17 +396,13 @@ class GLDrawStateExtractor(DrawStateExtractor):
 		return results
 
 	def _append_draw_state_summary(self, action_name, action_elapsed_time, csv_writer):
-		draw_state = DrawCallState(self.action, action_name, action_elapsed_time)
+		draw_state = DrawCallState(self.action, action_name, action_elapsed_time, self.pipe_state)
 		draw_state.viewport_size = self.get_viewport_info()
 		draw_state.renderpass_id = self.get_fbo_id()
 
 		if draw_state.renderpass_id != GLDrawStateExtractor.last_fbo_id:
 			draw_state.pass_switch = 'v'
 		GLDrawStateExtractor.last_fbo_id = draw_state.renderpass_id
-
-		draw_state.vert_shader_id = int(_get_shader_resource_id(self.pipe_state.vertexShader))
-		draw_state.frag_shader_id = int(_get_shader_resource_id(self.pipe_state.fragmentShader))
-		draw_state.comp_shader_id = int(_get_shader_resource_id(self.pipe_state.computeShader))
 
 		for category, tex_dict in self.get_input_texture_desc_map().items():
 			input_tex_descs = []
@@ -570,7 +572,7 @@ class VKDrawStateExtractor(DrawStateExtractor):
 		return results
 
 	def _append_draw_state_summary(self, action_name, action_elapsed_time, csv_writer):
-		draw_state = DrawCallState(self.action, action_name, action_elapsed_time)
+		draw_state = DrawCallState(self.action, action_name, action_elapsed_time, self.pipe_state)
 		draw_state.viewport_size = self.get_viewport_info()
 		draw_state.renderpass_id = self.get_renderpass_id()
 
@@ -578,9 +580,6 @@ class VKDrawStateExtractor(DrawStateExtractor):
 			draw_state.pass_switch = 'v'
 		VKDrawStateExtractor.last_render_pass_id = draw_state.renderpass_id
 
-		draw_state.vert_shader_id = int(_get_shader_resource_id(self.pipe_state.vertexShader))
-		draw_state.frag_shader_id = int(_get_shader_resource_id(self.pipe_state.fragmentShader))
-		draw_state.comp_shader_id = int(_get_shader_resource_id(self.pipe_state.computeShader))
 		draw_state.vs_textures = self.get_input_texture_desc(rd.ShaderStage.Vertex)
 		draw_state.fs_textures = self.get_input_texture_desc(rd.ShaderStage.Fragment)
 		draw_state.output_targets = self.get_output_target_desc()
