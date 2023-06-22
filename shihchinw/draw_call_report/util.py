@@ -186,7 +186,7 @@ class DrawStateExtractor:
 			with open(tmp_file_path, 'wb') as f:
 				f.write(reflection.rawBytes)
 				f.close()
-				cmd = f'"{_SPIRV_CROSS_PATH}" {tmp_file_path}'
+				cmd = f'"{_SPIRV_CROSS_PATH}" -V {tmp_file_path}'
 				return sp.check_output(cmd, stderr=sp.STDOUT, shell=True, encoding='utf-8')
 
 		raise NotImplementedError(f'Unsupported shader encoding {reflection.encoding}')
