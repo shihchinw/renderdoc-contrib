@@ -174,20 +174,13 @@ class DrawStateExtractor:
 	def _get_shader_content(self, shader):
 		reflection = shader.reflection
 		if not reflection:
-			return None
+			return (None, None)
 
 		encoding = reflection.encoding
 		if encoding == rd.ShaderEncoding.GLSL:
-			return reflection.rawBytes.decode('utf-8').rstrip('\x00')
+			return (reflection.rawBytes.decode('utf-8').rstrip('\x00'), encoding)
 		elif encoding == rd.ShaderEncoding.SPIRV:
-			# If the shader is SPIRV, we first dump the byte code to a temp file,
-			# then use spirv-cross for readable source code conversion.
-			tmp_file_path = os.path.join(tempfile.gettempdir(), 'spirv.bytes')
-			with open(tmp_file_path, 'wb') as f:
-				f.write(reflection.rawBytes)
-				f.close()
-				cmd = f'"{_SPIRV_CROSS_PATH}" -V {tmp_file_path}'
-				return sp.check_output(cmd, stderr=sp.STDOUT, shell=True, encoding='utf-8')
+			return (reflection.rawBytes, encoding)
 
 		raise NotImplementedError(f'Unsupported shader encoding {reflection.encoding}')
 
@@ -216,10 +209,19 @@ class DrawStateExtractor:
 		if not os.path.exists(output_dir):
 			os.makedirs(output_dir)
 
-		content = self._get_shader_content(shader)
+		content, encoding = self._get_shader_content(shader)
 		if not content:
 			warnings.warn(f'Cannot find shader content {shader_id}')
 			return
+
+		if encoding == rd.ShaderEncoding.SPIRV:
+			# Write spv binary file and use spirv-cross to get Vulkan GLSL content.
+			spirv_filepath = filepath + '.spv'
+			with open(spirv_filepath, 'wb') as f:
+				f.write(content)
+
+			cmd = f'"{_SPIRV_CROSS_PATH}" -V {spirv_filepath}'
+			content = sp.check_output(cmd, stderr=sp.STDOUT, shell=True, encoding='utf-8')
 
 		with open(filepath, 'w', encoding='utf-8') as out_file:
 			out_file.write(content)
