@@ -226,7 +226,7 @@ class DrawStateExtractor:
 			with open(spirv_filepath, 'wb') as f:
 				f.write(content)
 
-			cmd = f'"{_SPIRV_CROSS_PATH}" -V {spirv_filepath}'
+			cmd = f'"{_SPIRV_CROSS_PATH}" -V --version 460 {spirv_filepath}'
 			content = sp.check_output(cmd, stderr=sp.STDOUT, shell=True, encoding='utf-8')
 
 		with open(filepath, 'w', encoding='utf-8') as out_file:
@@ -443,15 +443,14 @@ class VKDrawStateExtractor(DrawStateExtractor):
 		pipe = self.controller.GetPipelineState()
 
 		resource_ids = []
-		for bound_array in pipe.GetReadOnlyResources(shader_stage, True):
-			for bound_resource in bound_array.resources:
-				resource_id = bound_resource.resourceId
-				if resource_id == rd.ResourceId.Null():
-					continue
+		for used_descriptor in pipe.GetReadOnlyResources(shader_stage, True):
+			resource_id = used_descriptor.descriptor.resource
+			if resource_id == rd.ResourceId.Null():
+				continue
 
-				resource_desc = self.capture.GetResource(resource_id)
-				if resource_desc.type == rd.ResourceType.Texture:
-					resource_ids.append(resource_id)
+			resource_desc = self.capture.GetResource(resource_id)
+			if resource_desc.type == rd.ResourceType.Texture:
+				resource_ids.append(resource_id)
 
 		return resource_ids
 
@@ -487,13 +486,13 @@ class VKDrawStateExtractor(DrawStateExtractor):
 				# Skip invalid attachment index
 				continue
 
-			resource_id = attachments[idx].imageResourceId
+			resource_id = attachments[idx].resource 	# buffer or image resource
 			if resource_id != rd.ResourceId.Null():
 				resource_ids.append(resource_id)
 
 		depth_attach_idx = current_pass.renderpass.depthstencilAttachment
 		if 0 <= depth_attach_idx < attachment_count:
-			resource_ids.append(attachments[depth_attach_idx].imageResourceId)
+			resource_ids.append(attachments[depth_attach_idx].resource)
 
 		return resource_ids
 
@@ -503,7 +502,7 @@ class VKDrawStateExtractor(DrawStateExtractor):
 		event_id = self.action.eventId
 
 		for idx in current_pass.renderpass.colorAttachments:
-			resource_id = attachments[idx].imageResourceId
+			resource_id = attachments[idx].resource
 			if resource_id == rd.ResourceId.Null():
 				continue
 
@@ -516,7 +515,7 @@ class VKDrawStateExtractor(DrawStateExtractor):
 		if depth_attach_idx < 0:
 			return
 
-		resource_id = attachments[depth_attach_idx].imageResourceId
+		resource_id = attachments[depth_attach_idx].resource
 		image_type = self._get_resource_image_type(resource_id, clamp_pixel_range)
 		filepath = os.path.join(output_dir, f'draw_depth_{event_id:04d}')
 		if _save_texture(resource_id, self.controller, filepath, image_type):
@@ -673,6 +672,19 @@ def async_export(ctx: qrd.CaptureContext, options: ExportOptions):
 	def _replay_callback(r: rd.ReplayController):
 		export_draw_call_states(r, ctx, options)
 	ctx.Replay().AsyncInvoke('DrawCallReporter', _replay_callback)
+
+
+def test_export(pyrenderdoc, output_dir):
+	options = ExportOptions()
+	options.draw_count = 3000
+	# options.start_event_id = 1885
+	# options.end_event_id = 1990
+	# options.export_input_textures = True
+	# options.export_output_targets = True
+	options.export_shaders = True
+	options.capture_gpu_duration = False
+	options.output_dir = output_dir
+	pyrenderdoc.Replay().BlockInvoke(lambda ctx: export_draw_call_states(ctx, pyrenderdoc, options))
 
 
 if 'pyrenderdoc' in globals():
